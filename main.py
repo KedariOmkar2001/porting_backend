@@ -46,6 +46,11 @@ def sql_val(val, is_int=False, is_bool=False):
         return f"'{val.date()}'"  # only date part
     return f"'{str(val).replace(chr(39), chr(39) + chr(39)).strip()}'"
 
+def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.dropna(how='all').dropna(axis=1, how='all')
+    df = df.replace(r'^\s*$', pd.NA, regex=True)
+    df = df.dropna(how='all').dropna(axis=1, how='all')
+    return df.reset_index(drop=True)
 
 # Enhanced version with fuzzy matching for designation names (space/case issues)
 def get_designation_id_from_designation_name(designation_name, designations_table):
@@ -546,6 +551,7 @@ async def validate_data(
         # Read employee data file
         employee_content = await employee_data.read()
         original_df = pd.read_excel(io.BytesIO(employee_content), sheet_name='Employee Details', header=[0, 1])
+        original_df = clean_dataframe(original_df)
 
         # Filter employees with designations - SAME AS CMD
         employees_df = original_df[
@@ -594,6 +600,7 @@ async def generate_sql(
         # Read employee data file
         employee_content = await employee_data.read()
         original_df = pd.read_excel(io.BytesIO(employee_content), sheet_name='Employee Details', header=[0, 1])
+        # original_df = clean_dataframe(original_df)
 
         # Filter out rows without designation - SAME AS CMD
         employees_df = original_df[
@@ -650,7 +657,7 @@ async def generate_sql(
             "message": "SQL queries generated successfully",
             "filename": output_filename,
             "stats": {
-                "total_employees": len(original_df),
+                "total_employees": len(clean_dataframe(original_df)),
                 "filtered_employees": len(employees_df),
                 "successfully_processed": success_count,
                 "errors": len(errors)

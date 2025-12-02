@@ -135,6 +135,8 @@ def get_office_of_user_by_designation(row):
     if office_column is None:
         return None
 
+
+
     return row[office_column]
 
 
@@ -424,7 +426,7 @@ def generate_queries(designations_df, offices_df, employees_df, config: Generati
     for index, row in employees_df.iterrows():
         try:
             # Extract employee data - SAME AS CMD
-            employee_number = row[('Employee Number*\n(Manav Sampada\nHRMS ID)', 'Unnamed: 0_level_1')]
+            employee_number = int(row[('Employee Number*\n(Manav Sampada\nHRMS ID)', 'Unnamed: 0_level_1')])
             title = row[('Title*', 'Unnamed: 1_level_1')]
             first_name = row[('First Name*\n(Special characters not allowed except space)', 'Unnamed: 2_level_1')]
             middle_name = row[('Middle Name\n(Special characters not allowed except space)', 'Unnamed: 3_level_1')]
@@ -440,7 +442,9 @@ def generate_queries(designations_df, offices_df, employees_df, config: Generati
 
             company_organization = row[('Company/Organisation', 'Unnamed: 15_level_1')]
             email = row[('Email', 'Unnamed: 16_level_1')]
-            contact_no = row[('Contact No.', 'Unnamed: 17_level_1')]
+
+            raw = row[('Contact No.', 'Unnamed: 17_level_1')]
+            contact_no = str(int(float(raw))) if not pd.isna(raw) else None
 
             # Get IDs using EXACT same methods as CMD
             designation_id = get_designation_id_from_designation_name(designation, designations_df)

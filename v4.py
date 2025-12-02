@@ -125,6 +125,20 @@ def get_designation_id_from_designation_name(designation_name, designations_tabl
     return result.iloc[0] if not result.empty else None
 
 
+# Get the role_id of the user
+def get_role_id_of_user_from_umsm_role_table(designation_name,umsm_role_table):
+
+    cleaned_designation_name = designation_name.strip().lower()
+    print("Cleaned Designation Name:",cleaned_designation_name)
+    result = umsm_role_table.loc[
+        umsm_role_table['role_name'].str.strip().str.lower() == cleaned_designation_name,
+        'role_id'
+    ]
+
+    print("Result:",result)
+    return result.iloc[0] if not result.empty else None
+
+
 # EXACT COPY from CMD code - NO MODIFICATIONS
 def get_office_id_from_office_name(office_name, offices_table):
     result = offices_table.loc[
@@ -428,7 +442,7 @@ def get_office_of_user_by_designation(row):
     return office_name
 
 
-def generate_queries(designations_df, offices_df, employees_df, config: GenerationConfig):
+def generate_queries(designations_df, offices_df, employees_df, config: GenerationConfig , user_role_df):
     """Generate SQL INSERT queries from DataFrames"""
 
     # Filter out rows with null designations - SAME AS CMD
@@ -480,6 +494,7 @@ def generate_queries(designations_df, offices_df, employees_df, config: Generati
             uid = config.starting_uid + success_count
             employee_id = config.starting_employee_id + success_count
             user_role_id = config.starting_user_role_id + success_count
+            user_role_id_from_role_name = get_role_id_of_user_from_umsm_role_table(designation,user_role_df)
 
             # ============ ENCRYPT SENSITIVE DATA ============
             encrypted_email = encrypt_aes(str(email) if pd.notna(email) else None, config.encryption_key)
@@ -489,6 +504,54 @@ def generate_queries(designations_df, offices_df, employees_df, config: Generati
             # Use encrypted values or NULL if encryption failed
             email_value = f"'{encrypted_email}'" if encrypted_email else "NULL"
             phone_value = f"'{encrypted_phone}'" if encrypted_phone else "NULL"
+
+            # ============ PRINT EXCEL DATA PREVIEW ============
+            queries.append("=" * 80)
+            queries.append(f"-- RECORD #{success_count + 1} - EXCEL DATA PREVIEW")
+            queries.append("=" * 80)
+            queries.append("")
+            queries.append("-- BASIC INFORMATION FROM EXCEL:")
+            queries.append(f"--   Employee Number       : {sql_val(employee_number,is_int=True) if pd.notna(employee_number) else 'N/A'}")
+            queries.append(f"--   Title                 : {title if pd.notna(title) else 'N/A'}")
+            queries.append(f"--   First Name            : {first_name if pd.notna(first_name) else 'N/A'}")
+            queries.append(f"--   Middle Name           : {middle_name if pd.notna(middle_name) else 'N/A'}")
+            queries.append(f"--   Last Name             : {last_name if pd.notna(last_name) else 'N/A'}")
+            queries.append(f"--   Full Name             : {full_name if pd.notna(full_name) else 'N/A'}")
+            queries.append("")
+            queries.append("-- DESIGNATION & OFFICE FROM EXCEL:")
+            queries.append(f"--   Designation           : {designation if pd.notna(designation) else 'N/A'}")
+            queries.append(f"--   Office Name           : {office_name if pd.notna(office_name) else 'N/A'}")
+            queries.append("")
+            queries.append("-- DATES FROM EXCEL:")
+            queries.append(f"--   Date of Joining       : {date_of_joining if pd.notna(date_of_joining) else 'N/A'}")
+            queries.append(
+                f"--   Date of Relieving     : {date_of_relieving if pd.notna(date_of_relieving) else 'N/A'}")
+            queries.append(f"--   Period From           : {period_from if pd.notna(period_from) else 'N/A'}")
+            queries.append(f"--   Period Till           : {period_till if pd.notna(period_till) else 'N/A'}")
+            queries.append("")
+            queries.append("-- CONTACT INFORMATION FROM EXCEL:")
+            queries.append(f"--   Email                 : {email if pd.notna(email) else 'N/A'}")
+            queries.append(f"--   Contact Number        : {sql_val(contact_no,is_int=True) if pd.notna(contact_no) else 'N/A'}")
+            queries.append(
+                f"--   Company/Organization  : {company_organization if pd.notna(company_organization) else 'N/A'}")
+            queries.append("")
+            queries.append("-- MAPPED/RESOLVED IDs:")
+            queries.append(f"--   Designation ID        : {designation_id if designation_id else 'NOT FOUND'}")
+            queries.append(f"--   Office ID             : {office_id if office_id else 'NOT FOUND'}")
+            queries.append(f"--   Role ID               : {user_role_id_from_role_name if user_role_id_from_role_name else 'NOT FOUND'}")
+            queries.append("")
+            queries.append("-- GENERATED IDs (Auto-incrementing):")
+            queries.append(f"--   Employee ID           : {employee_id}")
+            queries.append(f"--   UID                   : {uid}")
+            queries.append(f"--   User Role ID          : {user_role_id}")
+            queries.append("")
+            queries.append("-- SECURITY:")
+            queries.append(f"--   Email Encrypted       : {'YES' if encrypted_email else 'NO'}")
+            queries.append(f"--   Phone Encrypted       : {'YES' if encrypted_phone else 'NO'}")
+            queries.append(f"--   Password (Hashed)     : {hashed_password[:20]}... (SHA256)")
+            queries.append("")
+            queries.append("=" * 80)
+            queries.append("")
 
             # ============ GENERATE QUERIES IN NEW SEQUENCE ============
 
@@ -548,7 +611,7 @@ def generate_queries(designations_df, offices_df, employees_df, config: Generati
     NOW(), {config.operated_by_uid}, NULL,
     {sql_val(full_name)},
     {sql_val(designation)},
-    'HPPWD',
+    {sql_val(company_organization)},
     {config.tenant_id},
     {sql_val(designation_id, is_int=True)},
     {employee_id},
@@ -561,7 +624,7 @@ def generate_queries(designations_df, offices_df, employees_df, config: Generati
 ) VALUES (
     {user_role_id}, 
     {uid}, 
-    {config.role_id}, 
+    {user_role_id_from_role_name}, 
     {sql_val(office_id, is_int=True)}, 
     NOW(), 
     {config.operated_by_uid}, 
@@ -570,11 +633,11 @@ def generate_queries(designations_df, offices_df, employees_df, config: Generati
 );"""
 
             queries.append("")
-            queries.append("=" * 80)
-            queries.append(f"-- Employee: {full_name} ({employee_number})")
-            queries.append(f"-- Employee ID: {employee_id} | UID: {uid} | User Role ID: {user_role_id}")
-            queries.append("=" * 80)
-            queries.append("")
+            #queries.append("=" * 80)
+            #queries.append(f"-- Employee: {full_name} ({sql_val(employee_number,is_int=True)})")
+            #queries.append(f"-- Employee ID: {employee_id} | UID: {uid} | User Role ID: {user_role_id_from_role_name}")
+            #queries.append("=" * 80)
+            queries.append("SQL queries for the above Record")
             queries.append("-- [1/4] WAMIS DATABASE - amsm_employee")
             queries.append(employee_query)
             queries.append("")
@@ -642,6 +705,7 @@ async def generate_sql(
         master_content = await master_data.read()
         designations_df = pd.read_excel(io.BytesIO(master_content), sheet_name='gblm_designation')
         offices_df = pd.read_excel(io.BytesIO(master_content), sheet_name='gblm_office')
+        user_role_df = pd.read_excel(io.BytesIO(master_content), sheet_name='umsm_role')
 
         # Read employee data file
         employee_content = await employee_data.read()
@@ -664,7 +728,8 @@ async def generate_sql(
             designations_df,
             offices_df,
             employees_df,
-            config
+            config,
+            user_role_df
         )
 
         # Save to file
@@ -720,6 +785,8 @@ async def validate_data(
         master_content = await master_data.read()
         designations_df = pd.read_excel(io.BytesIO(master_content), sheet_name='gblm_designation')
         offices_df = pd.read_excel(io.BytesIO(master_content), sheet_name='gblm_office')
+        user_role_df = pd.read_excel(io.BytesIO(master_content), sheet_name='umsm_role')
+
 
         # Read employee data file
         employee_content = await employee_data.read()

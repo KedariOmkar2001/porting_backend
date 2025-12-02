@@ -43,11 +43,13 @@ class ValidationResult(BaseModel):
     warnings: List[Dict[str, Any]]
     summary: Dict[str, Any]
 
+
 # ============ ENCRYPTION FUNCTIONS ============
 
 def pad(data: bytes) -> bytes:
     padding_length = 16 - (len(data) % 16)
     return data + bytes([padding_length]) * padding_length
+
 
 def encrypt_aes_ecb_pkcs5(text: str, key: str) -> str:
     if text is None:
@@ -60,9 +62,11 @@ def encrypt_aes_ecb_pkcs5(text: str, key: str) -> str:
 
     return base64.b64encode(encrypted).decode("utf-8")
 
+
 def unpad(data: bytes) -> bytes:
     padding_len = data[-1]
     return data[:-padding_len]
+
 
 def decrypt_aes_ecb_pkcs5(ciphertext: str, key: str) -> str:
     key_bytes = key.encode("utf-8")
@@ -73,12 +77,14 @@ def decrypt_aes_ecb_pkcs5(ciphertext: str, key: str) -> str:
 
     return unpad(decrypted).decode("utf-8")
 
+
 def get_encryption_key(secret_key: str):
     """Generate a Fernet key from your secret"""
     # Use SHA256 to create a 32-byte key
     key = hashlib.sha256(secret_key.encode()).digest()
     # Fernet needs base64 encoded key
     return base64.urlsafe_b64encode(key)
+
 
 def encrypt_aes(plain_text: str, secret_key: str) -> str:
     """Encrypt text using AES (via Fernet)"""
@@ -112,32 +118,92 @@ def sql_val(val, is_int=False, is_bool=False):
     return f"'{str(val).replace(chr(39), chr(39) + chr(39)).strip()}'"
 
 
-# EXACT COPY from CMD code - NO MODIFICATIONS
+# FIXED: Strip and lowercase for comparison
 def get_designation_id_from_designation_name(designation_name, designations_table):
+    # Handle None or NaN
+    if designation_name is None or pd.isna(designation_name):
+        return None
 
-    if designation_name == 'DIVISIONAL ACCOUNTANT OFFICER':
-        designation_name = "DIVISIONAL ACCOUNTS OFFICER"
+    # Strip and normalize the input designation name
+    designation_name_cleaned = str(designation_name).strip().upper()
 
-    result = designations_table.loc[
-        designations_table['designation_name'] == designation_name,
+    # Special case handling - normalize both variations
+    if designation_name_cleaned == 'DIVISIONAL ACCOUNTANT OFFICER':
+        designation_name_cleaned = "DIVISIONAL ACCOUNTS OFFICER"
+
+    # Normalize the designation_name column in the table for comparison
+    designations_table_normalized = designations_table.copy()
+    designations_table_normalized['designation_name_normalized'] = (
+        designations_table_normalized['designation_name']
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
+    # Apply same special case to table
+    designations_table_normalized['designation_name_normalized'] = (
+        designations_table_normalized['designation_name_normalized']
+        .replace('DIVISIONAL ACCOUNTANT OFFICER', 'DIVISIONAL ACCOUNTS OFFICER')
+    )
+
+    result = designations_table_normalized.loc[
+        designations_table_normalized['designation_name_normalized'] == designation_name_cleaned,
         'designation_id'
     ]
+
     return result.iloc[0] if not result.empty else None
 
 
-# EXACT COPY from CMD code - NO MODIFICATIONS
+# FIXED: Already good, but added strip to be consistent
+def get_role_id_of_user_from_umsm_role_table(designation_name, umsm_role_table):
+    # Handle None or NaN
+    if designation_name is None or pd.isna(designation_name):
+        return None
+
+    cleaned_designation_name = str(designation_name).strip().lower()
+    print("Cleaned Designation Name:", cleaned_designation_name)
+
+    result = umsm_role_table.loc[
+        umsm_role_table['role_name'].astype(str).str.strip().str.lower() == cleaned_designation_name,
+        'role_id'
+    ]
+
+    print("Result:", result)
+    return result.iloc[0] if not result.empty else None
+
+
+# FIXED: Strip and lowercase for comparison
 def get_office_id_from_office_name(office_name, offices_table):
-    result = offices_table.loc[
-        offices_table['office_name'] == office_name,
+    # Handle None or NaN
+    if office_name is None or pd.isna(office_name):
+        return None
+
+    # Strip and normalize the input office name
+    office_name_cleaned = str(office_name).strip().lower()
+
+    # Normalize the office_name column in the table for comparison
+    offices_table_normalized = offices_table.copy()
+    offices_table_normalized['office_name_normalized'] = (
+        offices_table_normalized['office_name']
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
+    result = offices_table_normalized.loc[
+        offices_table_normalized['office_name_normalized'] == office_name_cleaned,
         'office_id'
     ]
+
     return result.iloc[0] if not result.empty else None
+
 
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.dropna(how='all').dropna(axis=1, how='all')
     df = df.replace(r'^\s*$', pd.NA, regex=True)
     df = df.dropna(how='all').dropna(axis=1, how='all')
     return df.reset_index(drop=True)
+
 
 def validate_employee_data(employees_df, designations_df, offices_df, original_df) -> ValidationResult:
     """Validate employee data before SQL generation - INFO ONLY, doesn't block"""
@@ -178,15 +244,12 @@ def validate_employee_data(employees_df, designations_df, offices_df, original_d
     # Get available office names and designation names for better error messages
     available_offices = set()
     if 'office_name' in offices_df.columns:
-        available_offices = set(offices_df['office_name'].dropna().tolist())
+        available_offices = set(offices_df['office_name'].astype(str).str.strip().str.lower().dropna().tolist())
 
     available_designations = set()
     if 'designation_name' in designations_df.columns:
-        available_designations = set(designations_df['designation_name'].dropna().tolist())
-
-    # Create a mapping of filtered index to original Excel row
-    # Employees_df is already filtered, so we use its index
-    original_indices = employees_df.index.tolist()
+        available_designations = set(
+            designations_df['designation_name'].astype(str).str.strip().str.upper().dropna().tolist())
 
     # Validate each row
     for idx, (orig_idx, row) in enumerate(employees_df.iterrows()):
@@ -216,7 +279,6 @@ def validate_employee_data(employees_df, designations_df, offices_df, original_d
         # Check Designation
         designation = row[('Incumbency Details', 'Designation*')]
         if pd.isna(designation):
-            # This shouldn't happen as we filter these out
             errors.append({
                 "type": "MISSING_VALUE",
                 "row": excel_row,
@@ -224,15 +286,16 @@ def validate_employee_data(employees_df, designations_df, offices_df, original_d
                 "message": f"Excel Row {excel_row}: Designation is missing"
             })
         else:
-            # Check if designation exists in master data
-            designation_id = get_designation_id_from_designation_name(designation, designations_df)
+            # Strip and check if designation exists in master data
+            designation_stripped = str(designation).strip()
+            designation_id = get_designation_id_from_designation_name(designation_stripped, designations_df)
             if designation_id is None:
                 errors.append({
                     "type": "INVALID_REFERENCE",
                     "row": excel_row,
                     "column": "Designation",
-                    "value": designation,
-                    "message": f"Excel Row {excel_row}: Designation '{designation}' not found in master data"
+                    "value": designation_stripped,
+                    "message": f"Excel Row {excel_row}: Designation '{designation_stripped}' not found in master data"
                 })
 
             # Check if office can be determined
@@ -242,27 +305,28 @@ def validate_employee_data(employees_df, designations_df, offices_df, original_d
                     "type": "MISSING_MAPPING",
                     "row": excel_row,
                     "column": "Office",
-                    "message": f"Excel Row {excel_row}: No office mapping defined for designation '{designation}'"
+                    "message": f"Excel Row {excel_row}: No office mapping defined for designation '{designation_stripped}'"
                 })
             elif pd.isna(office_name):
                 errors.append({
                     "type": "MISSING_VALUE",
                     "row": excel_row,
                     "column": "Office Name",
-                    "message": f"Excel Row {excel_row}: Office name is missing for designation '{designation}'"
+                    "message": f"Excel Row {excel_row}: Office name is missing for designation '{designation_stripped}'"
                 })
             else:
-                # Check if office exists in master data
-                office_id = get_office_id_from_office_name(office_name, offices_df)
+                # Strip and check if office exists in master data
+                office_name_stripped = str(office_name).strip()
+                office_id = get_office_id_from_office_name(office_name_stripped, offices_df)
                 if office_id is None:
                     # Find closest matches for better error messages
                     closest_matches = []
-                    office_name_check = str(office_name)
+                    office_name_check = office_name_stripped.lower()
                     for avail_office in available_offices:
-                        if office_name_check.strip().upper() == str(avail_office).strip().upper():
+                        if office_name_check == avail_office:
                             closest_matches.append(avail_office)
 
-                    error_msg = f"Excel Row {excel_row}: Office '{office_name}' not found in master data"
+                    error_msg = f"Excel Row {excel_row}: Office '{office_name_stripped}' not found in master data"
                     if closest_matches:
                         error_msg += f" (Case/space mismatch? Found similar: '{closest_matches[0]}')"
 
@@ -270,7 +334,7 @@ def validate_employee_data(employees_df, designations_df, offices_df, original_d
                         "type": "INVALID_REFERENCE",
                         "row": excel_row,
                         "column": "Office Name",
-                        "value": office_name,
+                        "value": office_name_stripped,
                         "message": error_msg,
                         "suggested_match": closest_matches[0] if closest_matches else None
                     })
@@ -318,7 +382,6 @@ def validate_employee_data(employees_df, designations_df, offices_df, original_d
     }
 
     # Validation passes if no CRITICAL errors (missing columns or structure issues)
-    # Data quality issues (missing values, invalid refs) are reported but don't block
     is_valid = len(missing_columns) == 0
 
     return ValidationResult(
@@ -327,6 +390,7 @@ def validate_employee_data(employees_df, designations_df, offices_df, original_d
         warnings=warnings,
         summary=summary
     )
+
 
 def validate_master_data(designations_df, offices_df) -> Dict[str, Any]:
     """Validate master data sheets"""
@@ -398,28 +462,43 @@ def validate_master_data(designations_df, offices_df) -> Dict[str, Any]:
         "office_count": len(offices_df)
     }
 
-# EXACT COPY from CMD code - NO MODIFICATIONS
+
+# FIXED: Strip and lowercase for comparison, strip after splitting
 def get_office_of_user_by_designation(row):
     designation_mapping_to_row = {
-        "DIVISIONAL ACCOUNTANT OFFICER": ('Incumbency Details', 'Division Office Name*'),
-        "JUNIOR ENGINEER": ('Incumbency Details', 'Section Office Name*'),
-        "AUDITOR": ('Incumbency Details', 'Division Office Name*'),
-        "ASSISTANT ENGINEER": ('Incumbency Details', 'Sub-division Office Name*'),
-        "JUNIOR DRAUGHTSMAN": ('Incumbency Details', 'Division Office Name*'),
-        "TENDER ASSISTANT": ('Incumbency Details', 'Division Office Name*'),
-        "DIVISIONAL ACCOUNTS OFFICER" : ('Incumbency Details', 'Division Office Name*'),
-        "EXECUTIVE ENGINEER" : ('Incumbency Details','Section Office Name*'),
+        "divisional accountant officer": ('Incumbency Details', 'Division Office Name*'),
+        "junior engineer": ('Incumbency Details', 'Section Office Name*'),
+        "auditor": ('Incumbency Details', 'Division Office Name*'),
+        "assistant engineer": ('Incumbency Details', 'Sub-division Office Name*'),
+        "junior draughtsman": ('Incumbency Details', 'Division Office Name*'),
+        "tender assistant": ('Incumbency Details', 'Division Office Name*'),
+        "divisional accounts officer": ('Incumbency Details', 'Division Office Name*'),
+        "executive engineer": ('Incumbency Details', 'Section Office Name*'),
     }
 
-    designation_name = row[('Incumbency Details', 'Designation*')]
+    designation_name_raw = row[('Incumbency Details', 'Designation*')]
+
+    # Handle None or NaN
+    if designation_name_raw is None or pd.isna(designation_name_raw):
+        return None
+
+    # Strip and lowercase for lookup
+    designation_name = str(designation_name_raw).strip().lower()
     office_column = designation_mapping_to_row.get(designation_name)
 
     if office_column is None:
         return None
 
-    office_name = str(row[office_column]).strip()
+    office_name_raw = row[office_column]
+
+    # Handle None or NaN
+    if office_name_raw is None or pd.isna(office_name_raw):
+        return None
+
+    office_name = str(office_name_raw).strip()
+
+    # If it's Section Office column → extract only first part before ' - ' or '-'
     if isinstance(office_column, tuple) and office_column[1].strip() == 'Section Office Name*':
-        # It's definitely the Section Office column → extract only first part
         if ' - ' in office_name:
             office_name = office_name.split(' - ', 1)[0].strip()
         elif '-' in office_name:
@@ -428,15 +507,13 @@ def get_office_of_user_by_designation(row):
     return office_name
 
 
-def generate_queries(designations_df, offices_df, employees_df, config: GenerationConfig):
+def generate_queries(designations_df, offices_df, employees_df, config: GenerationConfig, user_role_df):
     """Generate SQL INSERT queries from DataFrames"""
 
-    # Filter out rows with null designations - SAME AS CMD
+    # Filter out rows with null designations
     employees_df = employees_df[
         employees_df[('Incumbency Details', 'Designation*')].notna()
     ].copy()
-
-    # NO STRIPPING OR CLEANING - keep data as-is like CMD code
 
     queries = []
     errors = []
@@ -452,43 +529,112 @@ def generate_queries(designations_df, offices_df, employees_df, config: Generati
 
     for index, row in employees_df.iterrows():
         try:
-            # Extract employee data - SAME AS CMD
-            employee_number = row[('Employee Number*\n(Manav Sampada\nHRMS ID)', 'Unnamed: 0_level_1')]
-            title = row[('Title*', 'Unnamed: 1_level_1')]
-            first_name = row[('First Name*\n(Special characters not allowed except space)', 'Unnamed: 2_level_1')]
-            middle_name = row[('Middle Name\n(Special characters not allowed except space)', 'Unnamed: 3_level_1')]
-            last_name = row[('Last Name\n(Special characters not allowed except space)', 'Unnamed: 4_level_1')]
-            full_name = row[('Full Name*\n(Special characters not allowed except space)', 'Unnamed: 5_level_1')]
+            # Extract employee data and STRIP all values
+            employee_number_raw = row[('Employee Number*\n(Manav Sampada\nHRMS ID)', 'Unnamed: 0_level_1')]
+            employee_number = str(employee_number_raw).strip() if pd.notna(employee_number_raw) else None
+
+            title_raw = row[('Title*', 'Unnamed: 1_level_1')]
+            title = str(title_raw).strip() if pd.notna(title_raw) else None
+
+            first_name_raw = row[('First Name*\n(Special characters not allowed except space)', 'Unnamed: 2_level_1')]
+            first_name = str(first_name_raw).strip() if pd.notna(first_name_raw) else None
+
+            middle_name_raw = row[('Middle Name\n(Special characters not allowed except space)', 'Unnamed: 3_level_1')]
+            middle_name = str(middle_name_raw).strip() if pd.notna(middle_name_raw) else None
+
+            last_name_raw = row[('Last Name\n(Special characters not allowed except space)', 'Unnamed: 4_level_1')]
+            last_name = str(last_name_raw).strip() if pd.notna(last_name_raw) else None
+
+            full_name_raw = row[('Full Name*\n(Special characters not allowed except space)', 'Unnamed: 5_level_1')]
+            full_name = str(full_name_raw).strip() if pd.notna(full_name_raw) else None
+
             date_of_joining = row[
                 ('Date of Joining (in Deptt. Contratual/ Regular)*\n(dd-mmm-yyyy)', 'Unnamed: 6_level_1')]
             date_of_relieving = row[('Date of Relieving/Termination\n(dd-mmm-yyyy)', 'Unnamed: 7_level_1')]
 
-            designation = row[('Incumbency Details', 'Designation*')]
+            designation_raw = row[('Incumbency Details', 'Designation*')]
+            designation = str(designation_raw).strip() if pd.notna(designation_raw) else None
+
             period_from = row[('Incumbency Details', 'Period From (at presnet office)*\n(dd-mmm-yyyy)')]
             period_till = row[('Incumbency Details', 'Period Till\n(dd-mmm-yyyy)')]
 
-            company_organization = row[('Company/Organisation', 'Unnamed: 15_level_1')]
-            email = row[('Email', 'Unnamed: 16_level_1')]
-            contact_no = row[('Contact No.', 'Unnamed: 17_level_1')]
+            company_organization_raw = row[('Company/Organisation', 'Unnamed: 15_level_1')]
+            company_organization = str(company_organization_raw).strip() if pd.notna(company_organization_raw) else None
 
-            # Get IDs using EXACT same methods as CMD
+            email_raw = row[('Email', 'Unnamed: 16_level_1')]
+            email = str(email_raw).strip() if pd.notna(email_raw) else None
+
+            contact_no_raw = row[('Contact No.', 'Unnamed: 17_level_1')]
+            contact_no = str(contact_no_raw).strip() if pd.notna(contact_no_raw) else None
+
+            # Get IDs using the fixed lookup functions (with strip & lowercase)
             designation_id = get_designation_id_from_designation_name(designation, designations_df)
-            office_name = str(get_office_of_user_by_designation(row)).strip()
+            office_name_raw = get_office_of_user_by_designation(row)
+            office_name = str(office_name_raw).strip() if office_name_raw and pd.notna(office_name_raw) else None
             office_id = get_office_id_from_office_name(office_name, offices_df)
 
-            # NO VALIDATION - just like CMD code, let it process even if None
             uid = config.starting_uid + success_count
             employee_id = config.starting_employee_id + success_count
             user_role_id = config.starting_user_role_id + success_count
+            user_role_id_from_role_name = get_role_id_of_user_from_umsm_role_table(designation, user_role_df)
 
             # ============ ENCRYPT SENSITIVE DATA ============
-            encrypted_email = encrypt_aes(str(email) if pd.notna(email) else None, config.encryption_key)
-            encrypted_phone = encrypt_aes(str(contact_no) if pd.notna(contact_no) else None, config.encryption_key)
+            encrypted_email = encrypt_aes(email, config.encryption_key)
+            encrypted_phone = encrypt_aes(contact_no, config.encryption_key)
             hashed_password = config.default_password
 
             # Use encrypted values or NULL if encryption failed
             email_value = f"'{encrypted_email}'" if encrypted_email else "NULL"
             phone_value = f"'{encrypted_phone}'" if encrypted_phone else "NULL"
+
+            # ============ PRINT EXCEL DATA PREVIEW ============
+            queries.append("=" * 80)
+            queries.append(f"-- RECORD #{success_count + 1} - EXCEL DATA PREVIEW")
+            queries.append("=" * 80)
+            queries.append("")
+            queries.append("-- BASIC INFORMATION FROM EXCEL:")
+            queries.append(
+                f"--   Employee Number       : {sql_val(employee_number, is_int=True) if employee_number else 'N/A'}")
+            queries.append(f"--   Title                 : {title if title else 'N/A'}")
+            queries.append(f"--   First Name            : {first_name if first_name else 'N/A'}")
+            queries.append(f"--   Middle Name           : {middle_name if middle_name else 'N/A'}")
+            queries.append(f"--   Last Name             : {last_name if last_name else 'N/A'}")
+            queries.append(f"--   Full Name             : {full_name if full_name else 'N/A'}")
+            queries.append("")
+            queries.append("-- DESIGNATION & OFFICE FROM EXCEL:")
+            queries.append(f"--   Designation           : {designation if designation else 'N/A'}")
+            queries.append(f"--   Office Name           : {office_name if office_name else 'N/A'}")
+            queries.append("")
+            queries.append("-- DATES FROM EXCEL:")
+            queries.append(f"--   Date of Joining       : {date_of_joining if pd.notna(date_of_joining) else 'N/A'}")
+            queries.append(
+                f"--   Date of Relieving     : {date_of_relieving if pd.notna(date_of_relieving) else 'N/A'}")
+            queries.append(f"--   Period From           : {period_from if pd.notna(period_from) else 'N/A'}")
+            queries.append(f"--   Period Till           : {period_till if pd.notna(period_till) else 'N/A'}")
+            queries.append("")
+            queries.append("-- CONTACT INFORMATION FROM EXCEL:")
+            queries.append(f"--   Email                 : {email if email else 'N/A'}")
+            queries.append(f"--   Contact Number        : {sql_val(contact_no, is_int=True) if contact_no else 'N/A'}")
+            queries.append(f"--   Company/Organization  : {company_organization if company_organization else 'N/A'}")
+            queries.append("")
+            queries.append("-- MAPPED/RESOLVED IDs:")
+            queries.append(f"--   Designation ID        : {designation_id if designation_id else 'NOT FOUND'}")
+            queries.append(f"--   Office ID             : {office_id if office_id else 'NOT FOUND'}")
+            queries.append(
+                f"--   Role ID               : {user_role_id_from_role_name if user_role_id_from_role_name else 'NOT FOUND'}")
+            queries.append("")
+            queries.append("-- GENERATED IDs (Auto-incrementing):")
+            queries.append(f"--   Employee ID           : {employee_id}")
+            queries.append(f"--   UID                   : {uid}")
+            queries.append(f"--   User Role ID          : {user_role_id}")
+            queries.append("")
+            queries.append("-- SECURITY:")
+            queries.append(f"--   Email Encrypted       : {'YES' if encrypted_email else 'NO'}")
+            queries.append(f"--   Phone Encrypted       : {'YES' if encrypted_phone else 'NO'}")
+            queries.append(f"--   Password (Hashed)     : {hashed_password[:20]}... (SHA256)")
+            queries.append("")
+            queries.append("=" * 80)
+            queries.append("")
 
             # ============ GENERATE QUERIES IN NEW SEQUENCE ============
 
@@ -548,7 +694,7 @@ def generate_queries(designations_df, offices_df, employees_df, config: Generati
     NOW(), {config.operated_by_uid}, NULL,
     {sql_val(full_name)},
     {sql_val(designation)},
-    'HPPWD',
+    {sql_val(company_organization)},
     {config.tenant_id},
     {sql_val(designation_id, is_int=True)},
     {employee_id},
@@ -561,7 +707,7 @@ def generate_queries(designations_df, offices_df, employees_df, config: Generati
 ) VALUES (
     {user_role_id}, 
     {uid}, 
-    {config.role_id}, 
+    {user_role_id_from_role_name}, 
     {sql_val(office_id, is_int=True)}, 
     NOW(), 
     {config.operated_by_uid}, 
@@ -570,11 +716,11 @@ def generate_queries(designations_df, offices_df, employees_df, config: Generati
 );"""
 
             queries.append("")
-            queries.append("=" * 80)
-            queries.append(f"-- Employee: {full_name} ({employee_number})")
-            queries.append(f"-- Employee ID: {employee_id} | UID: {uid} | User Role ID: {user_role_id}")
-            queries.append("=" * 80)
-            queries.append("")
+            #queries.append("=" * 80)
+            #queries.append(f"-- Employee: {full_name} ({sql_val(employee_number,is_int=True)})")
+            #queries.append(f"-- Employee ID: {employee_id} | UID: {uid} | User Role ID: {user_role_id_from_role_name}")
+            #queries.append("=" * 80)
+            queries.append("SQL queries for the above Record")
             queries.append("-- [1/4] WAMIS DATABASE - amsm_employee")
             queries.append(employee_query)
             queries.append("")
@@ -642,6 +788,7 @@ async def generate_sql(
         master_content = await master_data.read()
         designations_df = pd.read_excel(io.BytesIO(master_content), sheet_name='gblm_designation')
         offices_df = pd.read_excel(io.BytesIO(master_content), sheet_name='gblm_office')
+        user_role_df = pd.read_excel(io.BytesIO(master_content), sheet_name='umsm_role')
 
         # Read employee data file
         employee_content = await employee_data.read()
@@ -664,7 +811,8 @@ async def generate_sql(
             designations_df,
             offices_df,
             employees_df,
-            config
+            config,
+            user_role_df
         )
 
         # Save to file
@@ -720,6 +868,8 @@ async def validate_data(
         master_content = await master_data.read()
         designations_df = pd.read_excel(io.BytesIO(master_content), sheet_name='gblm_designation')
         offices_df = pd.read_excel(io.BytesIO(master_content), sheet_name='gblm_office')
+        user_role_df = pd.read_excel(io.BytesIO(master_content), sheet_name='umsm_role')
+
 
         # Read employee data file
         employee_content = await employee_data.read()

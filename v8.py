@@ -155,20 +155,50 @@ def get_designation_id_from_designation_name(designation_name, designations_tabl
 
 
 # FIXED: Already good, but added strip to be consistent
-def get_role_id_of_user_from_umsm_role_table(designation_name, umsm_role_table):
-    # Handle None or NaN
-    if designation_name is None or pd.isna(designation_name):
+def get_role_id_of_user_from_umsm_role_table(designation_name: str, umsm_role_table) -> int | None:
+    """
+    Matches designation from Excel (e.g. "Executive Engineer")
+    against role_name in umsm_role table which can be:
+      • "Executive Engineer"
+      • "EE - Executive Engineer"
+      • "EE-Executive Engineer"
+      • "ee - executive engineer"
+      • etc.
+    """
+    if not designation_name or pd.isna(designation_name):
         return None
 
-    cleaned_designation_name = str(designation_name).strip().lower()
+    # Clean the input from Excel
+    target = str(designation_name).strip().lower()
 
-    result = umsm_role_table.loc[
-        umsm_role_table['role_name'].astype(str).str.strip().str.lower() == cleaned_designation_name,
-        'role_id'
-    ]
+    # Clean all role names once
+    role_names = umsm_role_table['role_name'].astype(str).str.strip().str.lower()
 
-    return result.iloc[0] if not result.empty else None
+    # Method 1: Exact match (if someone already uses clean name)
+    if target in role_names.values:
+        idx = role_names[role_names == target].index[0]
+        return int(umsm_role_table.loc[idx, 'role_id'])
 
+    # Method 2: Match text AFTER " - " or "-"
+    # "ee - executive engineer" → "executive engineer"
+    # "dao-divisional accounts officer" → "divisional accounts officer"
+    cleaned_roles = role_names.str.split(r'[\-\–\—]\s*', n=1).str[-1].str.strip()
+    # The above handles: -, –, — (different dash types)
+
+    match_after_dash = (cleaned_roles == target)
+    if match_after_dash.any():
+        idx = match_after_dash.idxmax()  # first match
+        return int(umsm_role_table.loc[idx, 'role_id'])
+
+    # Method 3: Match text BEFORE dash if it's short code like "EE", "AE", "JE"
+    # Useful if Excel accidentally has only "EE"
+    codes = role_names.str.split(r'[\-\–\—]\s*', n=1).str[0].str.strip()
+    if len(target) <= 4 and target.upper() in codes.str.upper().values:
+        idx = codes[codes.str.upper() == target.upper()].index[0]
+        return int(umsm_role_table.loc[idx, 'role_id'])
+
+    # Nothing found
+    return None
 
 # FIXED: Strip and lowercase for comparison
 def get_office_id_from_office_name(office_name, offices_table):
